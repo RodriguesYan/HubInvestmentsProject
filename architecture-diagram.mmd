@@ -1,0 +1,157 @@
+graph TB
+    subgraph "Client Layer"
+        CLIENT[🌐 Client<br/>Browser/Mobile App/curl]
+    end
+
+    subgraph "API Gateway Layer - Port 8080"
+        GATEWAY[🚪 API Gateway<br/>HTTP REST API<br/>localhost:8080]
+        
+        subgraph "Gateway Components"
+            ROUTER[📍 Route Matcher<br/>routes.yaml]
+            AUTH_MW[🔐 Auth Middleware<br/>JWT Validation]
+            PROXY[🔄 Proxy Handler<br/>JSON ↔ Proto]
+        end
+    end
+
+    subgraph "Microservices Layer"
+        USER_SVC[👤 User Service<br/>gRPC Server<br/>localhost:50051]
+        
+        subgraph "User Service Components"
+            AUTH_SERVER[🔑 Auth gRPC Server<br/>Login & ValidateToken]
+            TOKEN_SVC[🎫 Token Service<br/>JWT Creation/Validation]
+            LOGIN_UC[📝 Login Use Case]
+            USER_REPO[💾 User Repository]
+        end
+    end
+
+    subgraph "Monolith Layer - Port 50060"
+        MONOLITH[🏢 HubInvestments Monolith<br/>gRPC Server<br/>localhost:50060]
+        
+        subgraph "Monolith Services"
+            BALANCE_GRPC[💰 Balance gRPC Handler]
+            ORDER_GRPC[📋 Order gRPC Handler]
+            POSITION_GRPC[📊 Position gRPC Handler]
+            MARKET_GRPC[📈 Market Data gRPC Handler]
+            PORTFOLIO_GRPC[💼 Portfolio gRPC Handler]
+        end
+        
+        subgraph "Business Logic"
+            BALANCE_UC[Balance Use Case]
+            ORDER_UC[Order Use Case<br/>+ Validation]
+            POSITION_UC[Position Use Case]
+            MARKET_UC[Market Data Use Case<br/>+ Cache]
+            PORTFOLIO_UC[Portfolio Use Case]
+        end
+        
+        subgraph "Infrastructure"
+            ORDER_WORKER[⚙️ Order Workers<br/>5 workers]
+            POSITION_WORKER[⚙️ Position Worker]
+            IDEMPOTENCY[🔒 Idempotency Manager]
+        end
+    end
+
+    subgraph "Data Layer"
+        POSTGRES[(🐘 PostgreSQL<br/>Database<br/>hubinvestments)]
+        REDIS[(🔴 Redis<br/>Cache & Keys<br/>localhost:6379)]
+        RABBITMQ[(🐰 RabbitMQ<br/>Message Queue<br/>localhost:5672)]
+    end
+
+    subgraph "Data Tables"
+        USERS_TABLE[👥 users]
+        BALANCE_TABLE[💵 balance]
+        ORDERS_TABLE[📝 orders]
+        POSITIONS_TABLE[📊 positions]
+        MARKET_TABLE[📈 market_data]
+    end
+
+    %% Client to Gateway
+    CLIENT -->|1. HTTP JSON Request<br/>GET/POST/PUT| GATEWAY
+    GATEWAY -->|JSON Response| CLIENT
+
+    %% Gateway Internal Flow
+    GATEWAY --> ROUTER
+    ROUTER -->|Match Route| AUTH_MW
+    AUTH_MW -->|Protected Routes| PROXY
+    ROUTER -->|Public Routes| PROXY
+
+    %% Gateway to User Service (Auth)
+    AUTH_MW -->|2. gRPC ValidateToken<br/>Proto Request| USER_SVC
+    USER_SVC -->|Proto Response<br/>UserInfo| AUTH_MW
+
+    %% Gateway to Monolith
+    PROXY -->|3. gRPC Call<br/>Proto Request<br/>/hub_investments.Service/Method| MONOLITH
+
+    %% User Service Internal
+    USER_SVC --> AUTH_SERVER
+    AUTH_SERVER --> TOKEN_SVC
+    AUTH_SERVER --> LOGIN_UC
+    LOGIN_UC --> USER_REPO
+    USER_REPO --> POSTGRES
+
+    %% Monolith Internal - Balance
+    MONOLITH --> BALANCE_GRPC
+    BALANCE_GRPC --> BALANCE_UC
+    BALANCE_UC --> POSTGRES
+
+    %% Monolith Internal - Orders
+    MONOLITH --> ORDER_GRPC
+    ORDER_GRPC --> ORDER_UC
+    ORDER_UC --> IDEMPOTENCY
+    IDEMPOTENCY --> REDIS
+    ORDER_UC -->|Publish to Queue| RABBITMQ
+    RABBITMQ -->|Consume Messages| ORDER_WORKER
+    ORDER_WORKER -->|Process & Update| POSTGRES
+
+    %% Monolith Internal - Positions
+    MONOLITH --> POSITION_GRPC
+    POSITION_GRPC --> POSITION_UC
+    POSITION_UC --> POSTGRES
+    POSITION_UC -->|Position Events| RABBITMQ
+    RABBITMQ -->|Consume Events| POSITION_WORKER
+    POSITION_WORKER -->|Update Aggregations| POSTGRES
+
+    %% Monolith Internal - Market Data
+    MONOLITH --> MARKET_GRPC
+    MARKET_GRPC --> MARKET_UC
+    MARKET_UC -->|Check Cache| REDIS
+    REDIS -->|Cache Hit| MARKET_UC
+    MARKET_UC -->|Cache Miss| POSTGRES
+    POSTGRES -->|Store in Cache| REDIS
+
+    %% Monolith Internal - Portfolio
+    MONOLITH --> PORTFOLIO_GRPC
+    PORTFOLIO_GRPC --> PORTFOLIO_UC
+    PORTFOLIO_UC --> BALANCE_UC
+    PORTFOLIO_UC --> POSITION_UC
+
+    %% Database Tables
+    POSTGRES --> USERS_TABLE
+    POSTGRES --> BALANCE_TABLE
+    POSTGRES --> ORDERS_TABLE
+    POSTGRES --> POSITIONS_TABLE
+    POSTGRES --> MARKET_TABLE
+
+    %% Redis Usage
+    REDIS -.->|Token Cache| AUTH_MW
+    REDIS -.->|Market Data Cache| MARKET_UC
+    REDIS -.->|Idempotency Keys| IDEMPOTENCY
+
+    %% RabbitMQ Queues
+    RABBITMQ -.->|orders.submit<br/>orders.processing<br/>orders.retry<br/>orders.status| ORDER_WORKER
+    RABBITMQ -.->|positions.updates<br/>positions.retry| POSITION_WORKER
+
+    %% Styling
+    classDef clientStyle fill:#e1f5ff,stroke:#0288d1,stroke-width:3px,color:#000
+    classDef gatewayStyle fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000
+    classDef serviceStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px,color:#000
+    classDef monolithStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:3px,color:#000
+    classDef dataStyle fill:#ffebee,stroke:#c62828,stroke-width:3px,color:#000
+    classDef componentStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
+    
+    class CLIENT clientStyle
+    class GATEWAY,ROUTER,AUTH_MW,PROXY gatewayStyle
+    class USER_SVC,AUTH_SERVER,TOKEN_SVC,LOGIN_UC,USER_REPO serviceStyle
+    class MONOLITH,BALANCE_GRPC,ORDER_GRPC,POSITION_GRPC,MARKET_GRPC,PORTFOLIO_GRPC monolithStyle
+    class BALANCE_UC,ORDER_UC,POSITION_UC,MARKET_UC,PORTFOLIO_UC,ORDER_WORKER,POSITION_WORKER,IDEMPOTENCY componentStyle
+    class POSTGRES,REDIS,RABBITMQ,USERS_TABLE,BALANCE_TABLE,ORDERS_TABLE,POSITIONS_TABLE,MARKET_TABLE dataStyle
+

@@ -1,0 +1,237 @@
+version: '3.8'
+
+# Hub Investments Platform - Complete Stack
+# This orchestrates all microservices and their dependencies
+
+services:
+  # ============================================================================
+  # Shared Infrastructure
+  # ============================================================================
+  
+  # Redis (shared by gateway and monolith)
+  redis:
+    image: redis:7-alpine
+    container_name: hub-redis
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # PostgreSQL for Monolith
+  postgres-monolith:
+    image: postgres:14-alpine
+    container_name: hub-monolith-db
+    environment:
+      POSTGRES_USER: ${MONOLITH_DB_USER:-yanrodrigues}
+      POSTGRES_PASSWORD: ${MONOLITH_DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${MONOLITH_DB_NAME:-yanrodrigues}
+      POSTGRES_HOST_AUTH_METHOD: ${POSTGRES_AUTH_METHOD:-md5}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_monolith_data:/var/lib/postgresql/data
+      - ./HubInvestmentsServer/database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MONOLITH_DB_USER:-yanrodrigues}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # PostgreSQL for User Service
+  postgres-user:
+    image: postgres:14-alpine
+    container_name: hub-user-db
+    environment:
+      POSTGRES_USER: ${USER_DB_USER:-hubuser}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD:-hubpassword}
+      POSTGRES_DB: ${USER_DB_NAME:-hub_user_service}
+    ports:
+      - "5433:5432"  # Different port to avoid conflict
+    volumes:
+      - postgres_user_data:/var/lib/postgresql/data
+      - ./hub-user-service/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-hubuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # RabbitMQ for Monolith
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: hub-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # ============================================================================
+  # Microservices
+  # ============================================================================
+
+  # User Service
+  hub-user-service:
+    build:
+      context: .
+      dockerfile: hub-user-service/Dockerfile
+    image: hub-user-service:latest
+    container_name: hub-user-service
+    ports:
+      - "50051:50051"  # gRPC
+      - "8082:8080"    # HTTP (health checks)
+    environment:
+      GRPC_PORT: 0.0.0.0:50051
+      HTTP_PORT: 0.0.0.0:8080
+      DB_HOST: postgres-user
+      DB_PORT: 5432
+      DB_USER: ${USER_DB_USER:-hubuser}
+      DB_PASSWORD: ${USER_DB_PASSWORD:-hubpassword}
+      DB_NAME: ${USER_DB_NAME:-hub_user_service}
+      DB_SSLMODE: disable
+      DATABASE_URL: postgres://${USER_DB_USER:-hubuser}:${USER_DB_PASSWORD:-hubpassword}@postgres-user:5432/${USER_DB_NAME:-hub_user_service}?sslmode=disable
+      MY_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ENVIRONMENT: development
+    depends_on:
+      postgres-user:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # Monolith
+  hub-monolith:
+    build:
+      context: .
+      dockerfile: HubInvestmentsServer/Dockerfile
+    image: hub-monolith:latest
+    container_name: hub-monolith
+    ports:
+      - "8080:8080"    # HTTP REST API + WebSocket
+      - "50060:50060"  # gRPC
+    environment:
+      HTTP_PORT: 0.0.0.0:8080
+      GRPC_PORT: 0.0.0.0:50060
+      MARKET_DATA_GRPC_SERVER: localhost:50060
+      DB_HOST: postgres-monolith
+      DB_PORT: 5432
+      DB_USER: ${MONOLITH_DB_USER:-yanrodrigues}
+      DB_PASSWORD: ${MONOLITH_DB_PASSWORD:-postgres}
+      DB_NAME: ${MONOLITH_DB_NAME:-yanrodrigues}
+      DB_SSLMODE: disable
+      DATABASE_URL: postgres://${MONOLITH_DB_USER:-yanrodrigues}:${MONOLITH_DB_PASSWORD:-postgres}@postgres-monolith:5432/${MONOLITH_DB_NAME:-yanrodrigues}?sslmode=disable
+      MY_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      ENVIRONMENT: development
+    depends_on:
+      postgres-monolith:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # API Gateway
+  hub-api-gateway:
+    build:
+      context: .
+      dockerfile: hub-api-gateway/Dockerfile
+    image: hub-api-gateway:latest
+    container_name: hub-api-gateway
+    ports:
+      - "8081:8080"  # HTTP (using 8081 to avoid conflict with monolith)
+    environment:
+      HTTP_PORT: 8080
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      USER_SERVICE_ADDRESS: hub-user-service:50051
+      HUB_MONOLITH_ADDRESS: hub-monolith:50060
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      AUTH_CACHE_ENABLED: "true"
+      ENVIRONMENT: development
+    depends_on:
+      redis:
+        condition: service_healthy
+      hub-user-service:
+        condition: service_healthy
+      hub-monolith:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  redis_data:
+  postgres_monolith_data:
+  postgres_user_data:
+  rabbitmq_data:
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  hub-network:
+    driver: bridge
+    name: hub-network
+
