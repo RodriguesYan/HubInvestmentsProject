@@ -1,0 +1,476 @@
+# Hub Market Data Service
+
+**Microservice for Market Data and Real-time Quotes**
+
+## Overview
+
+The Hub Market Data Service is a standalone microservice extracted from the HubInvestments monolith. It provides:
+
+- **Market Data Queries**: Fetch instrument details (symbol, name, price, category)
+- **Real-time Quotes**: WebSocket streaming of live price updates
+- **Caching**: High-performance Redis caching (>95% hit rate)
+- **gRPC API**: Internal service-to-service communication
+- **HTTP REST API**: External client access via API Gateway
+
+## Architecture
+
+### Clean Architecture Layers
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Presentation Layer                       │
+│  (HTTP REST, gRPC, WebSocket)                               │
+└───────────────────────┬─────────────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────────────┐
+│                    Application Layer                        │
+│  (Use Cases, DTOs)                                          │
+└───────────────────────┬─────────────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────────────┐
+│                      Domain Layer                           │
+│  (Models, Repository Interfaces, Business Logic)            │
+└───────────────────────┬─────────────────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────────────────┐
+│                  Infrastructure Layer                       │
+│  (PostgreSQL, Redis, WebSocket Manager)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Technology Stack
+
+- **Language**: Go 1.22+
+- **Database**: PostgreSQL 16
+- **Cache**: Redis 7
+- **Communication**: gRPC, HTTP REST, WebSocket
+- **Containerization**: Docker, Docker Compose
+- **Observability**: Prometheus metrics, structured logging
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.22 or higher
+- Docker and Docker Compose
+- PostgreSQL 16 (or use Docker)
+- Redis 7 (or use Docker)
+
+### Local Development
+
+#### 1. Clone the Repository
+
+```bash
+git clone https://github.com/RodriguesYan/hub-market-data-service.git
+cd hub-market-data-service
+```
+
+#### 2. Install Dependencies
+
+```bash
+go mod download
+```
+
+#### 3. Set Up Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# Server Configuration
+HTTP_PORT=8080
+GRPC_PORT=50051
+WEBSOCKET_PORT=8082
+
+# Database Configuration
+DATABASE_URL=postgres://market_data_user:password@localhost:5432/hub_market_data_service?sslmode=disable
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Cache Configuration
+CACHE_TTL=5m
+CACHE_ENABLED=true
+
+# WebSocket Configuration
+WS_MAX_CONNECTIONS=10000
+WS_IDLE_TIMEOUT=30m
+
+# Logging
+LOG_LEVEL=info
+LOG_FORMAT=json
+
+# Metrics
+METRICS_ENABLED=true
+METRICS_PORT=9090
+```
+
+#### 4. Run with Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+This will start:
+- PostgreSQL database
+- Redis cache
+- Market Data Service
+
+#### 5. Run Locally (without Docker)
+
+```bash
+# Start PostgreSQL and Redis (if not using Docker)
+# Then run the service
+go run cmd/server/main.go
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run integration tests (requires Docker)
+go test -tags=integration ./...
+```
+
+### Building
+
+```bash
+# Build binary
+go build -o bin/market-data-service cmd/server/main.go
+
+# Build Docker image
+docker build -t hub-market-data-service:latest .
+
+# Build with version
+docker build -t hub-market-data-service:v1.0.0 --build-arg VERSION=v1.0.0 .
+```
+
+## API Documentation
+
+### gRPC API
+
+**Service**: `MarketDataService`
+
+**Methods**:
+- `GetMarketData(symbols []string) -> MarketDataResponse`
+- `StreamMarketData(symbols []string) -> stream MarketDataUpdate` (future)
+
+**Proto Definition**: `internal/infrastructure/grpc/proto/market_data.proto`
+
+### HTTP REST API
+
+**Base URL**: `http://localhost:8080/api/v1`
+
+#### Endpoints
+
+1. **Get Market Data**
+   ```
+   GET /market-data?symbols=AAPL,MSFT
+   Authorization: Bearer <JWT_TOKEN>
+   ```
+
+2. **Invalidate Cache** (Admin)
+   ```
+   POST /admin/market-data/cache/invalidate
+   Authorization: Bearer <ADMIN_JWT_TOKEN>
+   Content-Type: application/json
+
+   {
+     "symbols": ["AAPL", "MSFT"]
+   }
+   ```
+
+3. **Warm Cache** (Admin)
+   ```
+   POST /admin/market-data/cache/warm
+   Authorization: Bearer <ADMIN_JWT_TOKEN>
+   Content-Type: application/json
+
+   {
+     "symbols": ["AAPL", "MSFT", "TSLA"]
+   }
+   ```
+
+### WebSocket API
+
+**Endpoint**: `ws://localhost:8082/ws/quotes`
+
+**Query Parameters**:
+- `symbols`: Comma-separated list of symbols (e.g., `AAPL,MSFT`)
+- `token`: JWT authentication token
+
+**Message Format**: JSON Patch (RFC 6902)
+
+**Example Initial Message**:
+```json
+{
+  "type": "quotes_patch",
+  "operations": [
+    {
+      "op": "add",
+      "path": "/quotes/AAPL",
+      "value": {
+        "symbol": "AAPL",
+        "current_price": 150.25,
+        "change": 1.50,
+        "change_percent": 1.01,
+        "last_updated": "2024-07-20T10:30:00Z"
+      }
+    }
+  ]
+}
+```
+
+**Example Update Message**:
+```json
+{
+  "type": "quotes_patch",
+  "operations": [
+    {
+      "op": "replace",
+      "path": "/quotes/AAPL/current_price",
+      "value": 150.75
+    }
+  ]
+}
+```
+
+## Project Structure
+
+```
+hub-market-data-service/
+├── cmd/
+│   └── server/
+│       └── main.go                 # Application entry point
+├── internal/
+│   ├── domain/
+│   │   ├── model/                  # Domain models
+│   │   ├── repository/             # Repository interfaces
+│   │   └── service/                # Domain services
+│   ├── application/
+│   │   ├── usecase/                # Use cases (business logic)
+│   │   └── dto/                    # Data transfer objects
+│   ├── infrastructure/
+│   │   ├── persistence/            # Database repositories
+│   │   ├── cache/                  # Redis cache
+│   │   ├── grpc/                   # gRPC server
+│   │   ├── http/                   # HTTP REST handlers
+│   │   └── websocket/              # WebSocket handlers
+│   └── config/
+│       └── config.go               # Configuration management
+├── pkg/
+│   ├── logger/                     # Logging utilities
+│   └── errors/                     # Error handling
+├── scripts/
+│   ├── setup_database.sh           # Database setup script
+│   └── migrate_data.sh             # Data migration script
+├── deployments/
+│   ├── docker-compose.yml          # Docker Compose configuration
+│   └── kubernetes/                 # Kubernetes manifests
+├── docs/
+│   ├── API.md                      # API documentation
+│   ├── ARCHITECTURE.md             # Architecture overview
+│   └── DEPLOYMENT.md               # Deployment guide
+├── .env.example                    # Example environment variables
+├── .gitignore                      # Git ignore rules
+├── Dockerfile                      # Docker image definition
+├── Makefile                        # Build automation
+├── go.mod                          # Go module definition
+├── go.sum                          # Go module checksums
+└── README.md                       # This file
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HTTP_PORT` | HTTP server port | `8080` |
+| `GRPC_PORT` | gRPC server port | `50051` |
+| `WEBSOCKET_PORT` | WebSocket server port | `8082` |
+| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `REDIS_HOST` | Redis host | `localhost` |
+| `REDIS_PORT` | Redis port | `6379` |
+| `REDIS_PASSWORD` | Redis password | `` |
+| `CACHE_TTL` | Cache time-to-live | `5m` |
+| `CACHE_ENABLED` | Enable/disable caching | `true` |
+| `WS_MAX_CONNECTIONS` | Max WebSocket connections | `10000` |
+| `WS_IDLE_TIMEOUT` | WebSocket idle timeout | `30m` |
+| `LOG_LEVEL` | Logging level (debug, info, warn, error) | `info` |
+| `LOG_FORMAT` | Log format (json, text) | `json` |
+| `METRICS_ENABLED` | Enable Prometheus metrics | `true` |
+| `METRICS_PORT` | Metrics server port | `9090` |
+
+## Monitoring and Observability
+
+### Metrics
+
+Prometheus metrics are exposed at `http://localhost:9090/metrics`:
+
+- `market_data_requests_total` - Total number of market data requests
+- `market_data_request_duration_seconds` - Request duration histogram
+- `market_data_cache_hits_total` - Cache hit count
+- `market_data_cache_misses_total` - Cache miss count
+- `market_data_websocket_connections` - Active WebSocket connections
+- `market_data_errors_total` - Total error count
+
+### Health Checks
+
+- **Liveness**: `GET /health/live` - Returns 200 if service is running
+- **Readiness**: `GET /health/ready` - Returns 200 if service is ready to accept traffic
+
+### Logging
+
+Structured JSON logging with the following fields:
+- `timestamp`: ISO 8601 timestamp
+- `level`: Log level (debug, info, warn, error)
+- `message`: Log message
+- `service`: Service name (`market-data-service`)
+- `trace_id`: Distributed tracing ID (if available)
+- `user_id`: User ID (if available)
+- `error`: Error details (if applicable)
+
+## Deployment
+
+### Docker
+
+```bash
+# Build image
+docker build -t hub-market-data-service:latest .
+
+# Run container
+docker run -d \
+  --name market-data-service \
+  -p 8080:8080 \
+  -p 50051:50051 \
+  -p 8082:8082 \
+  --env-file .env \
+  hub-market-data-service:latest
+```
+
+### Docker Compose
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f market-data-service
+
+# Stop all services
+docker-compose down
+```
+
+### Kubernetes
+
+```bash
+# Apply manifests
+kubectl apply -f deployments/kubernetes/
+
+# Check deployment status
+kubectl get pods -l app=market-data-service
+
+# View logs
+kubectl logs -l app=market-data-service -f
+```
+
+## Performance
+
+### Benchmarks
+
+- **gRPC Latency**: p95 < 50ms, p99 < 100ms
+- **HTTP REST Latency**: p95 < 100ms, p99 < 200ms
+- **WebSocket Latency**: p95 < 25ms, p99 < 50ms
+- **Cache Hit Rate**: >95%
+- **Throughput**: 1000+ requests/second
+- **Concurrent WebSocket Connections**: 10,000+
+
+### Optimization
+
+- **Caching**: Redis cache-aside pattern with 5-minute TTL
+- **Connection Pooling**: PostgreSQL connection pool (max 25 connections)
+- **Horizontal Scaling**: Stateless design allows easy horizontal scaling
+- **Redis Pub/Sub**: For WebSocket scaling across multiple instances
+
+## Security
+
+- **Authentication**: JWT token validation via User Service
+- **Authorization**: Role-based access control (RBAC) for admin endpoints
+- **Network Isolation**: Service should not be publicly accessible (behind API Gateway)
+- **Input Validation**: All inputs are validated and sanitized
+- **Rate Limiting**: Configurable rate limits per user/IP
+- **TLS**: Support for TLS/SSL encryption (production)
+
+## Contributing
+
+### Development Workflow
+
+1. Create a feature branch: `git checkout -b feature/my-feature`
+2. Make changes and commit: `git commit -am 'Add my feature'`
+3. Push to the branch: `git push origin feature/my-feature`
+4. Create a Pull Request
+
+### Code Style
+
+- Follow [Effective Go](https://golang.org/doc/effective_go.html) guidelines
+- Use `gofmt` for formatting: `gofmt -w .`
+- Use `golint` for linting: `golint ./...`
+- Use `go vet` for static analysis: `go vet ./...`
+
+### Commit Messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+- `feat:` New feature
+- `fix:` Bug fix
+- `docs:` Documentation changes
+- `refactor:` Code refactoring
+- `test:` Test changes
+- `chore:` Build/tooling changes
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue**: Service fails to start with "connection refused" error
+**Solution**: Ensure PostgreSQL and Redis are running and accessible
+
+**Issue**: WebSocket connections fail with "authentication failed"
+**Solution**: Verify JWT token is valid and User Service is accessible
+
+**Issue**: Cache hit rate is low (<90%)
+**Solution**: Check Redis memory usage and TTL settings
+
+**Issue**: High latency (>200ms p95)
+**Solution**: Check database connection pool, Redis performance, and network latency
+
+### Debug Mode
+
+Enable debug logging:
+
+```bash
+export LOG_LEVEL=debug
+go run cmd/server/main.go
+```
+
+## License
+
+Copyright © 2024 HubInvestments. All rights reserved.
+
+## Contact
+
+- **Team**: HubInvestments Development Team
+- **Email**: support@hubinvestments.com
+- **Documentation**: [docs/](./docs/)
+- **Issues**: [GitHub Issues](https://github.com/RodriguesYan/hub-market-data-service/issues)
+
