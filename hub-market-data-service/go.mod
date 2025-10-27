@@ -3,7 +3,7 @@ module github.com/RodriguesYan/hub-market-data-service
 go 1.25.1
 
 require (
-	github.com/RodriguesYan/hub-proto-contracts v1.0.4
+	github.com/RodriguesYan/hub-proto-contracts v1.0.5-0.20251027232239-46cb378e694d
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.16.0
