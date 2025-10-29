@@ -89,8 +89,19 @@ services:
       # gRPC Configuration
       GRPC_PORT: 50053
 
+      # Cache Configuration
+      CACHE_TTL_MINUTES: 5
+
+      # Price Oscillation Service
+      PRICE_UPDATE_INTERVAL: 4
+      PRICE_OSCILLATION_PERCENT: 0.01
+
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: json
+      
+      # Environment
+      ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "8083:8083"   # HTTP REST API
       - "50053:50053" # gRPC API

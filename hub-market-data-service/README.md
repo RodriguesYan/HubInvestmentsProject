@@ -73,31 +73,59 @@ go mod download
 
 #### 3. Set Up Environment Variables
 
-Create a `.env` file in the project root:
+Copy the example environment file and update with your values:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your configuration:
 
 ```env
-# Server Configuration
-HTTP_PORT=8080
-GRPC_PORT=50051
-WEBSOCKET_PORT=8082
+# ====================================
+# SERVER CONFIGURATION
+# ====================================
+SERVER_PORT=8083
+SERVER_READ_TIMEOUT=15s
+SERVER_WRITE_TIMEOUT=15s
+SERVER_SHUTDOWN_TIMEOUT=10s
 
-# Database Configuration
-DATABASE_URL=postgres://market_data_user:password@localhost:5432/hub_market_data_service?sslmode=disable
+# ====================================
+# DATABASE CONFIGURATION (PostgreSQL)
+# ====================================
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=hub_market_data
+DB_SSLMODE=disable
 
-# Redis Configuration
+# ====================================
+# REDIS CONFIGURATION
+# ====================================
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=
+REDIS_DB=0
 
-# Cache Configuration
-CACHE_TTL=5m
-CACHE_ENABLED=true
+# ====================================
+# GRPC CONFIGURATION
+# ====================================
+GRPC_PORT=50053
 
-# WebSocket Configuration
-WS_MAX_CONNECTIONS=10000
-WS_IDLE_TIMEOUT=30m
+# ====================================
+# CACHE CONFIGURATION
+# ====================================
+CACHE_TTL_MINUTES=5
 
-# Logging
+# ====================================
+# PRICE OSCILLATION SERVICE
+# ====================================
+PRICE_UPDATE_INTERVAL=4
+PRICE_OSCILLATION_PERCENT=0.01
+
+# ====================================
+# LOGGING
 LOG_LEVEL=info
 LOG_FORMAT=json
 
@@ -291,25 +319,111 @@ hub-market-data-service/
 
 ## Configuration
 
+The service can be configured using environment variables or a `config.yaml` file. Environment variables take precedence over config file values.
+
+### Configuration Files
+
+1. **`.env.example`**: Template for environment variables (copy to `.env`)
+2. **`config.yaml`**: Structured YAML configuration with defaults
+
 ### Environment Variables
+
+#### Server Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HTTP_PORT` | HTTP server port | `8080` |
-| `GRPC_PORT` | gRPC server port | `50051` |
-| `WEBSOCKET_PORT` | WebSocket server port | `8082` |
-| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `SERVER_PORT` | HTTP server port | `8083` |
+| `SERVER_READ_TIMEOUT` | HTTP read timeout | `15s` |
+| `SERVER_WRITE_TIMEOUT` | HTTP write timeout | `15s` |
+| `SERVER_SHUTDOWN_TIMEOUT` | Graceful shutdown timeout | `10s` |
+
+#### Database Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_HOST` | PostgreSQL host | `localhost` |
+| `DB_PORT` | PostgreSQL port | `5432` |
+| `DB_USER` | PostgreSQL user | `postgres` |
+| `DB_PASSWORD` | PostgreSQL password | `postgres` |
+| `DB_NAME` | Database name | `hub_market_data` |
+| `DB_SSLMODE` | SSL mode (disable, require, verify-ca, verify-full) | `disable` |
+
+#### Redis Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `REDIS_HOST` | Redis host | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `REDIS_PASSWORD` | Redis password | `` |
-| `CACHE_TTL` | Cache time-to-live | `5m` |
-| `CACHE_ENABLED` | Enable/disable caching | `true` |
-| `WS_MAX_CONNECTIONS` | Max WebSocket connections | `10000` |
-| `WS_IDLE_TIMEOUT` | WebSocket idle timeout | `30m` |
+| `REDIS_DB` | Redis database number | `0` |
+
+#### gRPC Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GRPC_PORT` | gRPC server port | `50053` |
+
+#### Cache Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CACHE_TTL_MINUTES` | Cache TTL in minutes | `5` |
+
+#### Price Oscillation Service
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PRICE_UPDATE_INTERVAL` | Price update interval (seconds) | `4` |
+| `PRICE_OSCILLATION_PERCENT` | Price oscillation percentage (e.g., 0.01 = ±1%) | `0.01` |
+
+#### Logging Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `LOG_LEVEL` | Logging level (debug, info, warn, error) | `info` |
 | `LOG_FORMAT` | Log format (json, text) | `json` |
-| `METRICS_ENABLED` | Enable Prometheus metrics | `true` |
-| `METRICS_PORT` | Metrics server port | `9090` |
+
+#### Environment
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENVIRONMENT` | Environment (development, staging, production) | `development` |
+
+### Configuration Example
+
+**Using `.env` file**:
+
+```bash
+# Copy example and edit
+cp .env.example .env
+
+# Edit with your values
+nano .env
+```
+
+**Using `config.yaml`**:
+
+```yaml
+server:
+  port: 8083
+  read_timeout: 15s
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  dbname: hub_market_data
+
+grpc:
+  port: 50053
+
+cache:
+  ttl_minutes: 5
+
+price_oscillation:
+  update_interval_seconds: 4
+  oscillation_percent: 0.01
+```
 
 ## Monitoring and Observability
 
