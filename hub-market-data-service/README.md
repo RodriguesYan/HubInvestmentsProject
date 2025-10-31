@@ -177,30 +177,48 @@ go test -tags=integration ./...
 #### Streaming Integration Tests
 
 ```bash
-# Run all streaming tests (automated)
+# Run all streaming tests (automated unit/integration tests)
 make test-streaming
 
-# Run interactive streaming client
-make test-streaming-client
-
-# Or with custom parameters:
-go run scripts/test_streaming_client.go -symbols "AAPL,GOOGL,MSFT" -duration 1m
-
-# Run load test (100 concurrent clients)
-make test-streaming-load
-
-# Run stress test (1000 concurrent clients)
-make test-streaming-stress
+# Or run the test script directly:
+./scripts/test_streaming.sh
 ```
 
-The streaming tests cover:
+#### Standalone Streaming Test Clients
+
+These are interactive test clients for manual testing and load testing:
+
+```bash
+# Run single streaming client test
+./scripts/run_streaming_tests.sh client
+
+# With custom parameters:
+./scripts/run_streaming_tests.sh client --symbols AAPL,GOOGL,MSFT --duration 60s
+
+# Run load test (100 concurrent clients by default)
+./scripts/run_streaming_tests.sh load
+
+# Load test with custom parameters:
+./scripts/run_streaming_tests.sh load --clients 200 --duration 2m
+
+# Run both tests sequentially:
+./scripts/run_streaming_tests.sh both
+```
+
+**Test Client Options:**
+- `--server <address>` - gRPC server address (default: localhost:50054)
+- `--symbols <list>` - Comma-separated symbols (default: AAPL,GOOGL,MSFT)
+- `--duration <time>` - Test duration (default: 30s)
+- `--clients <number>` - Number of concurrent clients for load test (default: 100)
+
+**Test Coverage:**
 - Subscribe and receive quotes
 - Multiple subscriptions
 - Unsubscribe from symbols
 - Heartbeat mechanism (30s interval)
 - Graceful reconnection
 - Context cancellation
-- Concurrent clients (10, 100, 1000)
+- Concurrent clients (10, 100, 1000+)
 - Symbol scaling (up to 20 symbols)
 - Data structure validation
 

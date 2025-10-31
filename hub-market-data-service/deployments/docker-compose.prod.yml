@@ -1,0 +1,195 @@
+version: '3.9'
+
+# Production Docker Compose Configuration
+# This file is optimized for production deployment
+
+services:
+  # ==============================================================================
+  # PostgreSQL Database
+  # ==============================================================================
+  market-data-db:
+    image: postgres:16-alpine
+    container_name: market-data-db-prod
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-hub_market_data}
+      POSTGRES_USER: ${DB_USER:-market_data_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Database password is required}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      # Performance tuning
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_MAINTENANCE_WORK_MEM: 64MB
+      POSTGRES_CHECKPOINT_COMPLETION_TARGET: 0.9
+      POSTGRES_WAL_BUFFERS: 16MB
+      POSTGRES_DEFAULT_STATISTICS_TARGET: 100
+      POSTGRES_RANDOM_PAGE_COST: 1.1
+      POSTGRES_EFFECTIVE_IO_CONCURRENCY: 200
+      POSTGRES_WORK_MEM: 4MB
+      POSTGRES_MIN_WAL_SIZE: 1GB
+      POSTGRES_MAX_WAL_SIZE: 4GB
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - market-data-db-data:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+    networks:
+      - market-data-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-market_data_user} -d ${DB_NAME:-hub_market_data}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==============================================================================
+  # Redis Cache
+  # ==============================================================================
+  market-data-redis:
+    image: redis:7-alpine
+    container_name: market-data-redis-prod
+    restart: always
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?Redis password is required}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - market-data-redis-data:/data
+    networks:
+      - market-data-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==============================================================================
+  # Market Data Service
+  # ==============================================================================
+  market-data-service:
+    image: ${DOCKER_REGISTRY:-}hub-market-data-service:${VERSION:-latest}
+    container_name: market-data-service-prod
+    restart: always
+    depends_on:
+      market-data-db:
+        condition: service_healthy
+      market-data-redis:
+        condition: service_healthy
+    environment:
+      # Server Configuration
+      SERVER_PORT: ${SERVER_PORT:-8083}
+      SERVER_READ_TIMEOUT: ${SERVER_READ_TIMEOUT:-15s}
+      SERVER_WRITE_TIMEOUT: ${SERVER_WRITE_TIMEOUT:-15s}
+      SERVER_SHUTDOWN_TIMEOUT: ${SERVER_SHUTDOWN_TIMEOUT:-10s}
+
+      # Database Configuration
+      DB_HOST: market-data-db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-market_data_user}
+      DB_PASSWORD: ${DB_PASSWORD:?Database password is required}
+      DB_NAME: ${DB_NAME:-hub_market_data}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-5}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-5m}
+
+      # Redis Configuration
+      REDIS_HOST: market-data-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Redis password is required}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-10}
+      REDIS_MIN_IDLE_CONNS: ${REDIS_MIN_IDLE_CONNS:-5}
+
+      # gRPC Configuration
+      GRPC_PORT: ${GRPC_PORT:-50054}
+      GRPC_MAX_CONNECTION_IDLE: ${GRPC_MAX_CONNECTION_IDLE:-5m}
+      GRPC_MAX_CONNECTION_AGE: ${GRPC_MAX_CONNECTION_AGE:-30m}
+      GRPC_KEEPALIVE_TIME: ${GRPC_KEEPALIVE_TIME:-30s}
+      GRPC_KEEPALIVE_TIMEOUT: ${GRPC_KEEPALIVE_TIMEOUT:-10s}
+
+      # Cache Configuration
+      CACHE_TTL_MINUTES: ${CACHE_TTL_MINUTES:-5}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+
+      # Price Oscillation Service
+      PRICE_UPDATE_INTERVAL: ${PRICE_UPDATE_INTERVAL:-4}
+      PRICE_OSCILLATION_PERCENT: ${PRICE_OSCILLATION_PERCENT:-0.01}
+      PRICE_MIN_PRICE: ${PRICE_MIN_PRICE:-1.00}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_OUTPUT: ${LOG_OUTPUT:-stdout}
+
+      # Environment
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+
+      # Metrics
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_PORT: ${METRICS_PORT:-9090}
+
+    ports:
+      - "${SERVER_PORT:-8083}:8083"
+      - "${GRPC_PORT:-50054}:50054"
+      - "${METRICS_PORT:-9090}:9090"
+    networks:
+      - market-data-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "50054"]
+      interval: 30s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  market-data-network:
+    driver: bridge
+    name: market-data-network-prod
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  market-data-db-data:
+    name: market-data-db-data-prod
+    driver: local
+  market-data-redis-data:
+    name: market-data-redis-data-prod
+    driver: local
+

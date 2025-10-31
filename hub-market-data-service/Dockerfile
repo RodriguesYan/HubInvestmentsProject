@@ -59,11 +59,15 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Expose ports
-EXPOSE 8080 50051 8082 9090
+# 8083: HTTP server (if implemented)
+# 50054: gRPC server
+EXPOSE 8083 50054
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health/live || exit 1
+# Note: Health check endpoint needs to be implemented
+# For now, we check if the gRPC port is listening
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD nc -z localhost 50054 || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/market-data-service"]

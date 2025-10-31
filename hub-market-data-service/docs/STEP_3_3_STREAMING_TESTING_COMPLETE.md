@@ -570,3 +570,4 @@ Frontend Client (receives quote)
 
 **Status**: Ready for performance profiling (Step 3.4) and API Gateway integration (Step 4.1).
 
+
