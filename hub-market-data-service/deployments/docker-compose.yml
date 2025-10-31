@@ -87,7 +87,7 @@ services:
       REDIS_DB: 0
 
       # gRPC Configuration
-      GRPC_PORT: 50053
+      GRPC_PORT: 50054
 
       # Cache Configuration
       CACHE_TTL_MINUTES: 5
@@ -104,7 +104,7 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "8083:8083"   # HTTP REST API
-      - "50053:50053" # gRPC API
+      - "50054:50054" # gRPC API
     networks:
       - market-data-network
     healthcheck:

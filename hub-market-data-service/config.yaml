@@ -28,7 +28,7 @@ redis:
   min_idle_conns: 5
 
 grpc:
-  port: 50053
+  port: 50054
   max_connection_idle: 5m
   max_connection_age: 30m
   keepalive_time: 30s

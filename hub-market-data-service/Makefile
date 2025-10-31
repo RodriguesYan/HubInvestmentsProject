@@ -78,6 +78,26 @@ test-unit: ## Run unit tests only
 	@echo "$(COLOR_BLUE)Running unit tests...$(COLOR_RESET)"
 	go test -short -v ./...
 
+.PHONY: test-streaming
+test-streaming: ## Run streaming integration tests
+	@echo "$(COLOR_BLUE)Running streaming integration tests...$(COLOR_RESET)"
+	@./scripts/test_streaming.sh
+
+.PHONY: test-streaming-client
+test-streaming-client: ## Run interactive streaming client
+	@echo "$(COLOR_BLUE)Starting streaming client...$(COLOR_RESET)"
+	@go run scripts/test_streaming_client.go
+
+.PHONY: test-streaming-load
+test-streaming-load: ## Run streaming load test (100 clients)
+	@echo "$(COLOR_BLUE)Running streaming load test...$(COLOR_RESET)"
+	@go run scripts/test_streaming_load.go
+
+.PHONY: test-streaming-stress
+test-streaming-stress: ## Run streaming stress test (1000 clients)
+	@echo "$(COLOR_BLUE)Running streaming stress test...$(COLOR_RESET)"
+	@go run scripts/test_streaming_load.go -clients 1000 -duration 2m
+
 # ==============================================================================
 # Code Quality
 # ==============================================================================
