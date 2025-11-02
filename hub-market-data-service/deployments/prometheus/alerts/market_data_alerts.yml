@@ -1,0 +1,150 @@
+groups:
+  - name: market_data_service
+    interval: 30s
+    rules:
+      # High Error Rate Alert
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(market_data_grpc_errors_total[5m]) +
+            rate(market_data_db_errors_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "High error rate detected in Market Data Service"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # High Latency Alert
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(market_data_grpc_request_duration_seconds_bucket[5m])
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "High latency detected in Market Data Service"
+          description: "P95 latency is {{ $value }}s for {{ $labels.method }}"
+
+      # Critical Latency Alert
+      - alert: CriticalLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(market_data_grpc_request_duration_seconds_bucket[5m])
+          ) > 5.0
+        for: 2m
+        labels:
+          severity: critical
+          service: market-data
+        annotations:
+          summary: "CRITICAL: Very high latency in Market Data Service"
+          description: "P95 latency is {{ $value }}s for {{ $labels.method }}"
+
+      # Low Cache Hit Rate
+      - alert: LowCacheHitRate
+        expr: |
+          (
+            rate(market_data_cache_hits_total[5m]) / 
+            (rate(market_data_cache_hits_total[5m]) + rate(market_data_cache_misses_total[5m]))
+          ) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "Low cache hit rate in Market Data Service"
+          description: "Cache hit rate is {{ $value | humanizePercentage }}"
+
+      # Database Connection Pool Exhaustion
+      - alert: DBConnectionPoolExhaustion
+        expr: |
+          market_data_db_connection_pool_active / 
+          (market_data_db_connection_pool_active + market_data_db_connection_pool_idle) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "Database connection pool near exhaustion"
+          description: "{{ $value | humanizePercentage }} of database connections are in use"
+
+      # Service Down
+      - alert: ServiceDown
+        expr: up{job="market-data-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: market-data
+        annotations:
+          summary: "Market Data Service is down"
+          description: "The Market Data Service has been down for more than 1 minute"
+
+      # High Database Query Duration
+      - alert: HighDatabaseQueryDuration
+        expr: |
+          histogram_quantile(0.95, 
+            rate(market_data_db_query_duration_seconds_bucket[5m])
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "High database query duration"
+          description: "P95 query duration is {{ $value }}s for {{ $labels.operation }}"
+
+      # No Active Streams (when there should be)
+      - alert: NoActiveStreams
+        expr: |
+          market_data_grpc_active_streams == 0 and 
+          rate(market_data_grpc_requests_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: info
+          service: market-data
+        annotations:
+          summary: "No active streaming connections"
+          description: "There are no active streaming connections despite recent requests"
+
+      # Price Update Stalled
+      - alert: PriceUpdateStalled
+        expr: |
+          rate(market_data_price_updates_total[5m]) == 0 and 
+          market_data_active_subscribers > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: market-data
+        annotations:
+          summary: "Price updates have stalled"
+          description: "No price updates generated despite {{ $value }} active subscribers"
+
+      # High Memory Usage (if available)
+      - alert: HighMemoryUsage
+        expr: |
+          (process_resident_memory_bytes{job="market-data-service"} / 
+          (1024 * 1024 * 1024)) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "High memory usage in Market Data Service"
+          description: "Memory usage is {{ $value }}GB"
+
+      # Cache Errors
+      - alert: HighCacheErrorRate
+        expr: rate(market_data_cache_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: market-data
+        annotations:
+          summary: "High cache error rate"
+          description: "Cache error rate is {{ $value }} errors/second"
+
