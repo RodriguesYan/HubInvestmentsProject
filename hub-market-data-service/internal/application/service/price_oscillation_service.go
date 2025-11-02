@@ -193,7 +193,7 @@ func (s *PriceOscillationService) notifySubscribers(assets map[string]*model.Ass
 			select {
 			case subscriber.channel <- relevantAssets:
 			default:
-				log.Printf("Subscriber %s channel full, skipping update", subscriber.id)
+				log.Printf("⚠️  Subscriber %s channel full, skipping update", subscriber.id)
 			}
 		}
 	}
@@ -223,4 +223,3 @@ func (s *PriceOscillationService) getActiveSymbolsList() []string {
 	}
 	return slice
 }
-

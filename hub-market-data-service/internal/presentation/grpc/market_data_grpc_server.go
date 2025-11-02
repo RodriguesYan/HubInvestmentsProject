@@ -18,8 +18,8 @@ import (
 
 type MarketDataGRPCServer struct {
 	pb.UnimplementedMarketDataServiceServer
-	getMarketDataUsecase     usecase.IGetMarketDataUsecase
-	priceOscillationService  *service.PriceOscillationService
+	getMarketDataUsecase    usecase.IGetMarketDataUsecase
+	priceOscillationService *service.PriceOscillationService
 }
 
 func NewMarketDataGRPCServer(
@@ -101,13 +101,15 @@ func (s *MarketDataGRPCServer) GetAssetDetails(ctx context.Context, req *pb.GetA
 
 func (s *MarketDataGRPCServer) StreamQuotes(stream pb.MarketDataService_StreamQuotesServer) error {
 	ctx := stream.Context()
-	
+
 	subscribedSymbols := make(map[string]bool)
 	var subscriberID string
 	var priceChannel <-chan map[string]*model.AssetQuote
-	
+
 	errChan := make(chan error, 1)
-	
+	// Use interface{} to allow sending receive-only channels
+	channelUpdateChan := make(chan interface{}, 1)
+
 	go func() {
 		for {
 			req, err := stream.Recv()
@@ -121,7 +123,7 @@ func (s *MarketDataGRPCServer) StreamQuotes(stream pb.MarketDataService_StreamQu
 				errChan <- err
 				return
 			}
-			
+
 			switch req.Action {
 			case "subscribe":
 				for _, symbol := range req.Symbols {
@@ -129,58 +131,73 @@ func (s *MarketDataGRPCServer) StreamQuotes(stream pb.MarketDataService_StreamQu
 						subscribedSymbols[symbol] = true
 					}
 				}
-				
+
 				if subscriberID == "" {
-					subscriberID, priceChannel = s.priceOscillationService.Subscribe(subscribedSymbols)
+					var newChannel <-chan map[string]*model.AssetQuote
+					subscriberID, newChannel = s.priceOscillationService.Subscribe(subscribedSymbols)
 					log.Printf("New subscription created: %s for symbols: %v", subscriberID, req.Symbols)
+					channelUpdateChan <- newChannel
 				} else {
 					s.priceOscillationService.Unsubscribe(subscriberID)
-					subscriberID, priceChannel = s.priceOscillationService.Subscribe(subscribedSymbols)
+					var newChannel <-chan map[string]*model.AssetQuote
+					subscriberID, newChannel = s.priceOscillationService.Subscribe(subscribedSymbols)
 					log.Printf("Updated subscription: %s for symbols: %v", subscriberID, req.Symbols)
+					channelUpdateChan <- newChannel
 				}
-				
+
 			case "unsubscribe":
 				for _, symbol := range req.Symbols {
 					delete(subscribedSymbols, symbol)
 				}
-				
+
 				if len(subscribedSymbols) == 0 && subscriberID != "" {
 					s.priceOscillationService.Unsubscribe(subscriberID)
 					subscriberID = ""
-					priceChannel = nil
+					channelUpdateChan <- nil
 					log.Println("All symbols unsubscribed, closing subscription")
 				} else if subscriberID != "" {
 					s.priceOscillationService.Unsubscribe(subscriberID)
-					subscriberID, priceChannel = s.priceOscillationService.Subscribe(subscribedSymbols)
+					var newChannel <-chan map[string]*model.AssetQuote
+					subscriberID, newChannel = s.priceOscillationService.Subscribe(subscribedSymbols)
 					log.Printf("Updated subscription after unsubscribe: %s", subscriberID)
+					channelUpdateChan <- newChannel
 				}
 			}
 		}
 	}()
-	
+
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	defer heartbeatTicker.Stop()
-	
+
 	defer func() {
 		if subscriberID != "" {
 			s.priceOscillationService.Unsubscribe(subscriberID)
 			log.Printf("Cleaned up subscription: %s", subscriberID)
 		}
 	}()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Stream context cancelled")
 			return ctx.Err()
-			
+
 		case err := <-errChan:
 			if err != nil {
 				log.Printf("Stream error: %v", err)
 				return err
 			}
 			return nil
-			
+
+		case update := <-channelUpdateChan:
+			if update == nil {
+				priceChannel = nil
+				log.Println("❌ Price channel set to nil (unsubscribed)")
+			} else {
+				priceChannel = update.(<-chan map[string]*model.AssetQuote)
+				log.Println("✅ Price channel updated and ready to receive quotes")
+			}
+
 		case <-heartbeatTicker.C:
 			if err := stream.Send(&pb.StreamQuotesResponse{
 				Type: "heartbeat",
@@ -188,13 +205,15 @@ func (s *MarketDataGRPCServer) StreamQuotes(stream pb.MarketDataService_StreamQu
 				log.Printf("Failed to send heartbeat: %v", err)
 				return err
 			}
-			
+
 		case quotes, ok := <-priceChannel:
 			if !ok {
 				log.Println("Price channel closed")
 				return nil
 			}
-			
+
+			log.Printf("📤 Received %d quotes from price channel", len(quotes))
+
 			for _, quote := range quotes {
 				pbQuote := &pb.AssetQuote{
 					Symbol:        quote.Symbol,
@@ -208,7 +227,9 @@ func (s *MarketDataGRPCServer) StreamQuotes(stream pb.MarketDataService_StreamQu
 					Volume:        quote.Volume,
 					MarketCap:     quote.MarketCap,
 				}
-				
+
+				log.Printf("📤 Sending quote to gRPC stream: %s @ $%.2f", quote.Symbol, quote.CurrentPrice)
+
 				if err := stream.Send(&pb.StreamQuotesResponse{
 					Type:  "quote",
 					Quote: pbQuote,
@@ -216,6 +237,8 @@ func (s *MarketDataGRPCServer) StreamQuotes(stream pb.MarketDataService_StreamQu
 					log.Printf("Failed to send quote: %v", err)
 					return err
 				}
+
+				log.Printf("✅ Quote sent successfully: %s", quote.Symbol)
 			}
 		}
 	}

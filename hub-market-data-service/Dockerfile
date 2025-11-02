@@ -3,7 +3,7 @@
 # ==============================================================================
 # Stage 1: Builder
 # ==============================================================================
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make
@@ -11,14 +11,17 @@ RUN apk add --no-cache git make
 # Set working directory
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod go.sum ./
+# Allow Go to auto-download required toolchain
+ENV GOTOOLCHAIN=auto
+
+# Copy go mod files from hub-market-data-service directory
+COPY hub-market-data-service/go.mod hub-market-data-service/go.sum ./
 
 # Download dependencies
 RUN go mod download
 
-# Copy source code
-COPY . .
+# Copy source code from hub-market-data-service directory
+COPY hub-market-data-service/ .
 
 # Build arguments
 ARG VERSION=dev
@@ -26,7 +29,8 @@ ARG BUILD_TIME
 ARG GIT_COMMIT
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Build for the target architecture (auto-detected)
+RUN CGO_ENABLED=0 go build \
     -ldflags="-w -s -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME} -X main.GitCommit=${GIT_COMMIT}" \
     -o /app/bin/market-data-service \
     ./cmd/server/main.go

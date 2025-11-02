@@ -1,6 +1,6 @@
 module github.com/RodriguesYan/hub-market-data-service
 
-go 1.25.1
+go 1.24.0
 
 require (
 	github.com/RodriguesYan/hub-proto-contracts v1.0.5-0.20251027232239-46cb378e694d

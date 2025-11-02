@@ -76,6 +76,50 @@ services:
     networks:
       - hub-network
 
+  # PostgreSQL for Market Data Service
+  postgres-market-data:
+    image: postgres:16-alpine
+    container_name: hub-market-data-db
+    environment:
+      POSTGRES_USER: ${MARKET_DATA_DB_USER:-market_data_user}
+      POSTGRES_PASSWORD: ${MARKET_DATA_DB_PASSWORD:-market_data_password}
+      POSTGRES_DB: ${MARKET_DATA_DB_NAME:-hub_market_data}
+    ports:
+      - "5434:5432"  # Different port to avoid conflict
+    volumes:
+      - postgres_market_data_data:/var/lib/postgresql/data
+      - ./hub-market-data-service/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MARKET_DATA_DB_USER:-market_data_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # Redis for Market Data Service
+  redis-market-data:
+    image: redis:7-alpine
+    container_name: hub-market-data-redis
+    ports:
+      - "6380:6379"  # Different port to avoid conflict
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_market_data_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - hub-network
+
   # RabbitMQ for Monolith
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -127,7 +171,7 @@ services:
       postgres-user:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      test: ["CMD", "nc", "-z", "localhost", "50051"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -149,7 +193,7 @@ services:
     environment:
       HTTP_PORT: 0.0.0.0:8080
       GRPC_PORT: 0.0.0.0:50060
-      MARKET_DATA_GRPC_SERVER: localhost:50060
+      MARKET_DATA_GRPC_SERVER: hub-market-data-service:50054
       DB_HOST: postgres-monolith
       DB_PORT: 5432
       DB_USER: ${MONOLITH_DB_USER:-yanrodrigues}
@@ -173,12 +217,58 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      hub-market-data-service:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
+    networks:
+      - hub-network
+
+  # Market Data Service
+  hub-market-data-service:
+    build:
+      context: .
+      dockerfile: hub-market-data-service/Dockerfile
+    image: hub-market-data-service:latest
+    container_name: hub-market-data-service
+    ports:
+      - "50054:50054"  # gRPC
+      - "8083:8083"    # HTTP (if implemented)
+    environment:
+      GRPC_PORT: 50054
+      SERVER_PORT: 8083
+      DB_HOST: postgres-market-data
+      DB_PORT: 5432
+      DB_USER: ${MARKET_DATA_DB_USER:-market_data_user}
+      DB_PASSWORD: ${MARKET_DATA_DB_PASSWORD:-market_data_password}
+      DB_NAME: ${MARKET_DATA_DB_NAME:-hub_market_data}
+      DB_SSLMODE: disable
+      REDIS_HOST: redis-market-data
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      CACHE_TTL_MINUTES: 5
+      PRICE_UPDATE_INTERVAL: 4
+      PRICE_OSCILLATION_PERCENT: 0.01
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+      ENVIRONMENT: development
+    depends_on:
+      postgres-market-data:
+        condition: service_healthy
+      redis-market-data:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "50054"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       - hub-network
@@ -198,6 +288,7 @@ services:
       REDIS_PORT: 6379
       USER_SERVICE_ADDRESS: hub-user-service:50051
       HUB_MONOLITH_ADDRESS: hub-monolith:50060
+      HUB_MARKET_DATA_SERVICE_ADDRESS: hub-market-data-service:50054
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_CACHE_ENABLED: "true"
       ENVIRONMENT: development
@@ -208,8 +299,10 @@ services:
         condition: service_healthy
       hub-monolith:
         condition: service_healthy
+      hub-market-data-service:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -223,8 +316,10 @@ services:
 # ============================================================================
 volumes:
   redis_data:
+  redis_market_data_data:
   postgres_monolith_data:
   postgres_user_data:
+  postgres_market_data_data:
   rabbitmq_data:
 
 # ============================================================================

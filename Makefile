@@ -33,16 +33,18 @@ start: check-env ## Start all services
 	@make ps
 	@echo ""
 	@echo "$(BLUE)📡 Service Endpoints:$(NC)"
-	@echo "  API Gateway:    http://localhost:8081"
-	@echo "  Monolith HTTP:  http://localhost:8080"
-	@echo "  Monolith gRPC:  localhost:50060"
-	@echo "  User Service:   localhost:50051 (gRPC)"
-	@echo "  RabbitMQ UI:    http://localhost:15672 (guest/guest)"
+	@echo "  API Gateway:       http://localhost:8081"
+	@echo "  Monolith HTTP:     http://localhost:8080"
+	@echo "  Monolith gRPC:     localhost:50060"
+	@echo "  User Service:      localhost:50051 (gRPC)"
+	@echo "  Market Data:       localhost:50054 (gRPC)"
+	@echo "  RabbitMQ UI:       http://localhost:15672 (guest/guest)"
 	@echo ""
 	@echo "$(BLUE)🔍 Health Checks:$(NC)"
-	@echo "  Gateway:        http://localhost:8081/health"
-	@echo "  Monolith:       http://localhost:8080/health"
-	@echo "  User Service:   http://localhost:8082/health"
+	@echo "  Gateway:           http://localhost:8081/health"
+	@echo "  Monolith:          http://localhost:8080/health"
+	@echo "  User Service:      http://localhost:8082/health"
+	@echo "  Market Data:       grpcurl -plaintext localhost:50054 list"
 	@echo ""
 	@echo "$(YELLOW)⏳ Waiting for services to be ready...$(NC)"
 	@sleep 5
@@ -70,6 +72,9 @@ logs-user: ## View User Service logs
 
 logs-monolith: ## View Monolith logs
 	@docker compose logs -f hub-monolith
+
+logs-market-data: ## View Market Data Service logs
+	@docker compose logs -f hub-market-data-service
 
 ps: ## Show service status
 	@docker compose ps
@@ -180,11 +185,17 @@ shell-user: ## Open shell in user service container
 shell-monolith: ## Open shell in monolith container
 	@docker exec -it hub-monolith /bin/sh
 
+shell-market-data: ## Open shell in market data service container
+	@docker exec -it hub-market-data-service /bin/sh
+
 shell-db-monolith: ## Open PostgreSQL shell for monolith
 	@docker exec -it hub-monolith-db psql -U yanrodrigues
 
 shell-db-user: ## Open PostgreSQL shell for user service
 	@docker exec -it hub-user-db psql -U hubuser -d hub_user_service
+
+shell-db-market-data: ## Open PostgreSQL shell for market data service
+	@docker exec -it hub-market-data-db psql -U market_data_user -d hub_market_data
 
 check-env: ## Check if .env file exists
 	@if [ ! -f .env ]; then \
@@ -220,7 +231,7 @@ health-check: ## Check health of all services
 	echo "$(YELLOW)Run 'make ps' to check status$(NC)"
 
 stats: ## Show resource usage
-	@docker stats --no-stream hub-api-gateway hub-user-service hub-monolith
+	@docker stats --no-stream hub-api-gateway hub-user-service hub-monolith hub-market-data-service
 
 network-inspect: ## Inspect hub-network
 	@docker network inspect hub-network | jq '.[0].Containers'
